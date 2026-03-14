@@ -9,7 +9,7 @@ const logger = pino();
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 // Minimum 3 seconds to stay well under Google's 300 req/min quota
-const POLL_INTERVAL = Math.max(3000, parseInt(process.env.POLL_INTERVAL || '3000'));
+const POLL_INTERVAL = Math.max(30000, parseInt(process.env.POLL_INTERVAL || '30000'));
 const SHEET_RANGE = process.env.SHEET_RANGE || 'Sheet1!A1:H20';
 
 // Redis keys for offline resilience
@@ -100,22 +100,12 @@ export class CDCMonitor {
      */
     private async processPendingChangesOnStartup(): Promise<void> {
         console.log('🔍 Checking for pending offline changes...');
-        
-        // Check pending changes to DB (from sheet edits while DB was down)
-        const pendingToDbCount = await redisClient.llen(REDIS_KEYS.PENDING_TO_DB).catch(() => 0);
-        if (pendingToDbCount > 0) {
-            console.log(`📥 Found ${pendingToDbCount} pending changes to sync to DB`);
-            await this.processPendingChanges('db');
-        }
-        
-        // Check pending changes to Sheet (from SQL queries while Sheet was down)
-        const pendingToSheetCount = await redisClient.llen(REDIS_KEYS.PENDING_TO_SHEET).catch(() => 0);
-        if (pendingToSheetCount > 0) {
-            console.log(`📥 Found ${pendingToSheetCount} pending changes to sync to Sheet`);
-            await this.processPendingChanges('sheet');
-        }
-        
-        if (pendingToDbCount === 0 && pendingToSheetCount === 0) {
+
+        // Replay pending changes directly to avoid extra LLEN calls on startup.
+        const processedToDb = await this.processPendingChanges('db');
+        const processedToSheet = await this.processPendingChanges('sheet');
+
+        if (processedToDb === 0 && processedToSheet === 0) {
             console.log('✅ No pending offline changes');
         }
     }
@@ -185,10 +175,7 @@ export class CDCMonitor {
         let processed = 0;
 
         try {
-            const length = await redisClient.llen(key);
-            if (length === 0) return 0;
-
-            console.log(`\n🔄 Processing ${length} pending changes to ${target}...`);
+            console.log(`\n🔄 Processing pending changes to ${target}...`);
 
             while (true) {
                 const item = await redisClient.lpop(key);
@@ -308,6 +295,16 @@ export class CDCMonitor {
         return new Map(this.lastSnapshot);
     }
 
+    private mapsEqual(a: Map<string, string>, b: Map<string, string>): boolean {
+        if (a.size !== b.size) return false;
+
+        for (const [key, value] of a.entries()) {
+            if (b.get(key) !== value) return false;
+        }
+
+        return true;
+    }
+
     private async loadInitialSnapshot() {
         const data = await this.fetchSheetData();
         if (!data) {
@@ -373,8 +370,10 @@ export class CDCMonitor {
                 });
             });
 
-            // Save to Redis for offline resilience
-            await this.saveSnapshotToRedis(cellMap);
+            // Save to Redis only when sheet data actually changes.
+            if (!this.mapsEqual(cellMap, this.lastSnapshot)) {
+                await this.saveSnapshotToRedis(cellMap);
+            }
 
             return cellMap;
         } catch (error: any) {

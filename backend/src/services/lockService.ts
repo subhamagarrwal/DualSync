@@ -2,7 +2,7 @@ import redisClient from '../config/redis';
 
 const LOCK_TTL = 5;
 const RETRY_DELAY = 200;
-const MAX_RETRIES = 15;
+const MAX_RETRIES = 5;
 
 export class LockService {
 
