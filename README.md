@@ -5,15 +5,6 @@
 ![Node.js](https://img.shields.io/badge/Node.js-22-green) ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue) ![React](https://img.shields.io/badge/React-19-61dafb) ![MySQL](https://img.shields.io/badge/MySQL-8-orange) ![Redis](https://img.shields.io/badge/Redis-7-red) ![BullMQ](https://img.shields.io/badge/BullMQ-5-purple)
 
 ---
-
-## 🎯 Key Technical Highlights
-
-- **27+ Edge Cases Handled** — Echo loops, lock contention, SQL injection, rate limiting, webhook failures, graceful degradation
-- **Distributed Architecture** — Stateless backend, Redis-backed distributed locks, horizontally scalable job queue
-- **Production-Grade Security** — 21-keyword SQL guard, multi-layer injection defense, input validation across 6 attack vectors
-- **Sub-500ms Sync Latency** — Debounced batching, snapshot-based diffing, intelligent dirty flagging
-- **Built for Scale** — 10K+ concurrent users with K8s auto-scaling, read replicas, Redis cluster, multi-project Google API architecture
-
 ---
 
 ## 📋 Table of Contents
@@ -38,20 +29,20 @@
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                    CLIENT LAYER                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
-│  │ Google Sheets│  │ SQL Terminal │  │ Bot Simulator│        │
-│  │  (Embedded)  │  │   (Monaco)   │  │  (Testing)   │        │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ Google Sheets│  │ SQL Terminal │  │ Bot Simulator│          │
+│  │  (Embedded)  │  │   (Monaco)   │  │  (Testing)   │          │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
 └─────────┼──────────────────┼──────────────────┼────────────────┘
           │                  │                  │
 ┌─────────┼──────────────────┼──────────────────┼────────────────┐
 │         │         SYNC ENGINE LAYER           │                │
 │         ↓                  ↓                  ↓                │
-│  ┌─────────────┐    ┌─────────────┐   ┌─────────────┐        │
-│  │ CDC Monitor │    │ SQL Guard & │   │   BullMQ    │        │
-│  │ (Polling    │    │ Lock Manager│   │   Workers   │        │
-│  │  3s cycle)  │    │   (Redis)   │   │ (Async Sync)│        │
-│  └─────┬───────┘    └─────┬───────┘   └─────┬───────┘        │
+│  ┌─────────────┐    ┌─────────────┐   ┌─────────────┐          │
+│  │ CDC Monitor │    │ SQL Guard & │   │   BullMQ    │          │
+│  │ (Polling    │    │ Lock Manager│   │   Workers   │          │
+│  │  3s cycle)  │    │   (Redis)   │   │ (Async Sync)│          │
+│  └─────┬───────┘    └─────┬───────┘   └─────┬───────┘          │
 │        │                   │                  │                │
 │        └───────────────────┼──────────────────┘                │
 │                            ↓                                   │
@@ -65,12 +56,12 @@
                             ↓
 ┌───────────────────────────┼────────────────────────────────────┐
 │               DATA & CACHE LAYER                               │
-│   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
-│   │    MySQL     │   │  Redis Cache │   │ Google Sheets│     │
-│   │  (Source of  │   │  - Locks     │   │  API (v4)    │     │
-│   │   Truth)     │   │  - Ignore    │   │              │     │
-│   │              │   │  - Queue     │   │              │     │
-│   └──────────────┘   └──────────────┘   └──────────────┘     │
+│   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐       │
+│   │    MySQL     │   │  Redis Cache │   │ Google Sheets│       │
+│   │  (Source of  │   │  - Locks     │   │  API (v4)    │       │
+│   │   Truth)     │   │  - Ignore    │   │              │       │
+│   │              │   │  - Queue     │   │              │       │
+│   └──────────────┘   └──────────────┘   └──────────────┘       │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -124,7 +115,7 @@ All three work together — if one fails, the others catch it.
 
 ---
 
-## 🔁 How It Works
+## How It Works
 
 The system maintains **two independent data flows** that together form a bidirectional sync loop:
 
@@ -202,34 +193,8 @@ The webhook worker also triggers `debouncedSyncFromDatabase()` on job completion
 
 **Decision:** Redis wins on every metric critical for distributed systems.
 
-#### Why BullMQ Over AWS SQS or RabbitMQ?
-
-| Feature | BullMQ | AWS SQS | RabbitMQ |
-|---------|--------|---------|----------|
-| **Latency** | <5ms (Redis) | ~20ms (network) | ~10ms |
-| **Cost** | $0 (uses existing Redis) | $0.40 per 1M requests | VM cost |
-| **Retries** | ✅ Exponential backoff built-in | ✅ Dead-letter queue | ✅ Manual config |
-| **Rate Limiting** | ✅ Native (55/min) | ❌ Requires additional code | ❌ Manual throttling |
-| **Concurrency** | ✅ Per-worker setting | ❌ One message at a time | ✅ Prefetch count |
-| **Persistence** | ✅ Redis AOF/RDB | ✅ Replicated | ✅ Disk |
-| **Setup** | `npm install bullmq` | AWS account + IAM | Cluster setup |
 
 **Decision:** BullMQ provides everything SQS does, with lower latency and zero additional cost.
-
-#### Why MySQL Over PostgreSQL or MongoDB?
-
-| Requirement | MySQL | PostgreSQL | MongoDB |
-|-------------|-------|------------|---------|
-| **`UPSERT` for cells** | ✅ `ON DUPLICATE KEY UPDATE` | ✅ `ON CONFLICT DO UPDATE` | ✅ `updateOne({upsert:true})` |
-| **Row-level locking** | ✅ Native | ✅ Native | ❌ Document-level only |
-| **Replication maturity** | ✅ 20+ years | ✅ Streaming replication | ⚠️ Replica sets complex |
-| **Connection pooling** | ✅ ProxySQL | ✅ PgBouncer | ✅ Native |
-| **Hosting options** | ✅ RDS, Aurora, PlanetScale | ✅ RDS, Supabase | ✅ Atlas, self-hosted |
-| **Data integrity** | ✅ ACID | ✅ ACID | ⚠️ Eventually consistent |
-
-**Decision:** MySQL `ON DUPLICATE KEY UPDATE` is purpose-built for the cell-upsert pattern. PostgreSQL would work equally well; MySQL chosen for familiarity.
-
----
 
 ## 🚀 Getting Started
 
@@ -317,30 +282,6 @@ npm run dev
 
 Open **http://localhost:5173** — you'll see the embedded Google Sheet, the database grid, and the SQL terminal.
 
----
-
-## 🔐 Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MYSQL_HOST` | ✅ | MySQL server hostname |
-| `MYSQL_PORT` | ❌ | MySQL port (default: 3306) |
-| `MYSQL_USER` | ✅ | MySQL username |
-| `MYSQL_PASSWORD` | ✅ | MySQL password |
-| `MYSQL_DATABASE` | ✅ | Database name |
-| `REDIS_URL` | ✅ | Redis connection URL |
-| `GOOGLE_SHEET_ID` | ✅ | ID from the Google Sheet URL |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | ✅ | Service account email |
-| `GOOGLE_PRIVATE_KEY` | ✅ | Private key from JSON key file |
-| `POLL_INTERVAL` | ❌ | Sheet polling interval in ms (default: 3000, **minimum enforced: 3000**). Values below 3000ms are clamped to prevent rate limiting. |
-| `SHEET_RANGE` | ❌ | Range to monitor (default: `Sheet1!A1:H20`) |
-| `SHEET_CACHE_TTL` | ❌ | Cache validity in ms (default: 10000) |
-| `PORT` | ❌ | Backend port (default: 3000) |
-| `BACKEND_URL` | ❌ | Public URL for webhook callbacks |
-
----
-
----
 
 ## 📈 Scalability & Performance
 
@@ -357,280 +298,6 @@ Open **http://localhost:5173** — you'll see the embedded Google Sheet, the dat
 | **Redis Operations** | ~1,000 ops/sec | 100,000+ ops/sec | Redis Cluster (6 nodes) |
 | **Sync Latency (p95)** | <500ms | <200ms | Debouncing + batching |
 | **Uptime SLA** | Best-effort | 99.9% | K8s auto-scaling + health checks |
-
----
-
-### Scalability Principles
-
-#### 1. Stateless Backend (Already Implemented ✅)
-
-**Why It Matters:** Stateless instances can be added/removed without coordination.
-
-```
-Current:
-┌─────────────┐
-│  Backend-1  │ ← All traffic
-└─────────────┘
-       ↓
- MySQL + Redis
-
-At Scale:
-              ┌─────────────┐
-     ┌───────→│  Backend-1  │
-     │        └─────────────┘
-Load │        ┌─────────────┐
-Balancer ────→│  Backend-2  │──→ Shared Redis Cluster
-(Nginx)│      └─────────────┘
-     │        ┌─────────────┐
-     └───────→│  Backend-N  │
-              └─────────────┘
-                     ↓
-           MySQL (Primary + Replicas)
-```
-
-**Key Properties:**
-- ✅ No in-memory session state
-- ✅ Redis holds all locks, ignore keys, and queue state
-- ✅ Each backend instance is identical
-- ✅ Horizontal auto-scaling based on CPU/memory
-
----
-
-#### 2. Distributed Locking (Already Implemented ✅)
-
-**Redis `SET NX EX` works across ALL backend instances:**
-
-```
-Backend-1: acquireLock(3, 'B') → ✅ SUCCESS
-Backend-2: acquireLock(3, 'B') → ❌ BLOCKED (same Redis key)
-Backend-3: acquireLock(3, 'B') → ❌ BLOCKED
-```
-
-**Scale Bottleneck:** Single Redis = 10,000 ops/sec max
-
-**Solution:** Redis Cluster (6 nodes) = 100,000+ ops/sec
-```bash
-# Lock keys use hash tags for consistent sharding
-lock:{3:B}  → Hash slot 5432 → Redis Node-2
-lock:{4:C}  → Hash slot 8912 → Redis Node-5
-```
-
----
-
-#### 3. Job Queue with BullMQ (Already Implemented ✅)
-
-**Current:** 1 backend = 1 worker (5 concurrent jobs)
-
-**At Scale:** Separate API layer from Worker layer
-
-```
-┌─────────────────────────────────┐
-│   API Layer (10 pods)           │
-│   - Lightweight                 │
-│   - Only adds jobs to queue     │
-│   - <10ms response time         │
-└─────────────────────────────────┘
-              ↓ (Redis Queue)
-┌─────────────────────────────────┐
-│   Worker Layer (20 pods)        │
-│   - CPU-intensive sync tasks    │
-│   - Google Sheets API calls     │
-│   - 5 concurrent jobs each      │
-│   - Total: 100 parallel syncs   │
-└─────────────────────────────────┘
-```
-
-**Benefits:**
-- API responds in <10ms (job queued, not executed)
-- Workers scale independently (add more for sync throughput)
-- Rate limiting enforced at worker level (55 jobs/min per sheet)
-
----
-
-#### 4. Database Connection Pooling
-
-**Current Problem:**
-```
-10 backends × 10 connections = 100 total connections
-MySQL default max = 151 connections
-→ Will hit limit with 15 backends ❌
-```
-
-**Solution 1: ProxySQL**
-```
-Backend-1 ──┐
-Backend-2 ──┼──→ ProxySQL ──→ MySQL (20 connections)
-Backend-3 ──┘     (pools 100→20)
-```
-
-**Solution 2: Read Replicas**
-```
-Backend-1 (Write) ────→ MySQL Primary
-Backend-2 (Write) ────→ MySQL Primary
-Backend-3 (Read) ─────→ MySQL Replica-1
-Backend-4 (Read) ─────→ MySQL Replica-2
-
-SELECT queries → Replicas (80% of traffic)
-INSERT/UPDATE → Primary (20% of traffic)
-```
-
-**Result:** 5× throughput increase with 2 replicas
-
----
-
-#### 5. Google Sheets API Quota Management
-
-**Current Quota:** 300 requests/min per Google Cloud project
-
-**Problem:** 100 sheets × 300 req/min = 30,000 req/min needed
-
-**Solution: Multi-Project Architecture**
-```
-Sheet-1  → Google Project-1 (300 req/min)
-Sheet-2  → Google Project-1 (shared)
-Sheet-3  → Google Project-2 (300 req/min)
-...
-Sheet-99 → Google Project-50 (300 req/min)
-
-50 projects = 15,000 req/min quota
-```
-
-**Request Batching (Already Implemented ✅):**
-```javascript
-// Instead of 5 API calls:
-sheets.update(A1, 'X'); sheets.update(A2, 'Y'); ...
-
-// Use 1 batched call:
-sheets.batchUpdate([{ range: 'A1', value: 'X' }, ...]);
-```
-
-**Result:** 80% reduction in API calls via 500ms debounce window
-
----
-
-### Deployment Architecture at Scale
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              DNS + CDN (CloudFlare)                     │
-│        api.superjoin.com → DDoS protection              │
-└─────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────┐
-│          Load Balancer (AWS ALB / Nginx)                │
-│        SSL termination, health checks                   │
-└─────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────┐
-│              API Layer (Kubernetes)                     │
-│   ┌──────┐ ┌──────┐ ┌──────┐         ┌──────┐         │
-│   │ API-1│ │ API-2│ │ API-3│   ...   │API-10│         │
-│   └──────┘ └──────┘ └──────┘         └──────┘         │
-│          Auto-scale: 2-50 pods (CPU > 70%)             │
-└─────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────┐
-│            Worker Layer (Kubernetes)                    │
-│   ┌────────┐ ┌────────┐ ┌────────┐  ┌────────┐        │
-│   │Worker-1│ │Worker-2│ │Worker-3│ │Worker-20│        │
-│   └────────┘ └────────┘ └────────┘  └────────┘        │
-│       Auto-scale: 5-100 pods (queue depth)             │
-└─────────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────────┐
-│               Data Layer                                │
-│  ┌──────────────┐   ┌──────────────┐                   │
-│  │ Redis Cluster│   │ MySQL Cluster│                   │
-│  │  (6 nodes)   │   │ 1 Primary +  │                   │
-│  │  Sentinel HA │   │ 2 Replicas   │                   │
-│  └──────────────┘   └──────────────┘                   │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-### Performance Benchmarks
-
-#### Current (Single Instance)
-| Test | p95 Latency | Throughput |
-|------|-------------|------------|
-| Simple SELECT | 5ms | 200 req/sec |
-| Single cell write (with lock) | 50ms | 20 writes/sec |
-| 100 concurrent writes (different cells) | 200ms | 500 writes/sec |
-| DB→Sheet sync (10 cells) | 800ms | — |
-| Sheet→DB sync (10 cells) | 300ms | — |
-
-#### Target at Scale (10 pods + 20 workers)
-| Test | p95 Latency | Throughput |
-|------|-------------|------------|
-| Simple SELECT | 3ms | 10,000 req/sec |
-| Single cell write | 30ms | 5,000 writes/sec |
-| 1000 concurrent writes | 150ms | 20,000 writes/sec |
-| DB→Sheet sync (100 cells, batched) | 500ms | — |
-
----
-
-### Cost Analysis (AWS Production)
-
-| Component | Current | At Scale | Monthly Cost |
-|-----------|---------|----------|--------------|
-| **Compute (API)** | 1× t3.medium | 10× t3.large | $750 |
-| **Workers** | — | 20× t3.medium | $600 |
-| **Load Balancer** | — | ALB | $20 |
-| **MySQL RDS** | db.t3.small | db.r6g.2xlarge + 2 replicas | $600 |
-| **Redis** | ElastiCache t3.micro | r6g.xlarge cluster (6 nodes) | $400 |
-| **Data Transfer** | Negligible | 1 TB/mo | $90 |
-| **Google Cloud** | 1 project (free) | 50 projects | $500 |
-| **Monitoring** | CloudWatch (free) | Datadog | $200 |
-| **Total** | **~$75/mo** | **~$3,160/mo** | **$3,160** |
-
-**Cost per user at scale:** $0.32/month
-
----
-
-### Scale Readiness Checklist
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Stateless backend** | ✅ Ready | No in-memory state; can add instances anytime |
-| **Distributed locks** | ✅ Ready | Redis `SET NX EX` works across instances |
-| **Job queue** | ✅ Ready | BullMQ supports multiple workers out-of-box |
-| **Health checks** | ❌ Todo | Need `/health` endpoint for K8s readiness probe |
-| **Graceful shutdown** | ✅ Ready | SIGTERM handler stops CDC, workers, DB, Redis |
-| **Connection pooling** | ⚠️ Partial | Need ProxySQL for 50+ backends |
-| **Read replicas** | ❌ Todo | Need to separate read/write queries |
-| **Redis cluster** | ❌ Todo | Single instance OK for <1K users |
-| **Multi-project Google** | ❌ Todo | Single project limits to 5-10 sheets |
-| **Metrics/Observability** | ❌ Todo | Prometheus + Grafana for monitoring |
-
-**Current Scale Capacity:** ~500 concurrent users, 10 sheets
-**Next Bottleneck:** Google API quota (300 req/min)
-
----
-
-### Test 1: Sheet → Database
-
-1. Open the Google Sheet in the embedded viewer (or in a new tab).
-2. Type a value in any cell (e.g., `A2 = "Hello"`).
-3. Within 3 seconds, the Database View panel below will show the change.
-
-### Test 2: Database → Sheet
-
-1. In the SQL Terminal, run:
-   ```sql
-   INSERT INTO users (row_num, col_name, cell_value, last_modified_by)
-   VALUES (3, 'B', 'World', 'sql_terminal');
-   ```
-2. Within ~5 seconds (2s debounce + API call), cell `B3` in the Google Sheet will show `World`.
-
-### Test 3: Multiplayer (Bot Simulation)
-
-1. Set the bot count to 8–20 in the **Lock Stress Test** panel.
-2. Click **Launch Bots**.
-3. Watch: some bots succeed, some get `BLOCKED` — proving that concurrent writes to the same cell are serialized.
-4. All successful writes are synced to the sheet automatically.
-
----
 
 ---
 
@@ -708,77 +375,6 @@ sheets.batchUpdate([{ range: 'A1', value: 'X' }, ...]);
 
 ---
 
-### 📊 Edge Case Coverage Summary
-
-```
-┌────────────────────────────────┬───────┬──────────┐
-│ Category                       │ Count │ Priority │
-├────────────────────────────────┼───────┼──────────┤
-│ Concurrency & Locking          │   6   │   🔴 P0  │
-│ Sync Integrity & Echo Loop     │  10   │   🔴 P0  │
-│ Security & SQL Injection       │   8   │   🔴 P0  │
-│ Reliability & Failure Recovery │   3   │   🟡 P1  │
-├────────────────────────────────┼───────┼──────────┤
-│ TOTAL HANDLED                  │  27   │          │
-└────────────────────────────────┴───────┴──────────┘
-```
-
-**Testing Coverage:**
-- ✅ 8-bot concurrent write simulation
-- ✅ 21 SQL injection attack vectors
-- ✅ Network partition recovery
-- ✅ Rate limit + backoff simulation
-- ✅ Echo loop stress test (5 rapid edits)
-
----
-
-## 🔌 Offline Resilience
-
-The system is designed to degrade gracefully when the backend is unavailable. See [OFFLINE.md](OFFLINE.md) for a detailed breakdown.
-
-**Summary:**
-
-| Feature | Online | Offline |
-|---------|--------|---------|
-| Google Sheet (iframe) | ✅ Visible + editable | ✅ Visible + editable |
-| Database View | ✅ Live data from MySQL | ❌ Hidden |
-| SQL Terminal | ✅ Executes immediately | ✅ Queues to localStorage |
-| Offline Queue | — | ✅ Auto-replays on reconnect |
-| Graceful Shutdown | — | ✅ CDC Monitor, Worker, DB pool, Redis all cleaned up |
-
----
-
-## 💡 What Could Have Been Done
-
-### With More Time
-
-| Improvement | Why It Matters |
-|-------------|---------------|
-| **MySQL Binary Log (binlog) CDC** | Replace polling with true event-driven change capture using `mysql-events` or Debezium; sub-second latency from DB→Sheet |
-| **WebSocket live feed** | Push changes to the frontend instantly instead of 1-second polling; reduces DB load |
-| **Operational Transform (OT) / CRDT** | Google Docs-style conflict resolution for simultaneous edits to the same cell; currently last-write-wins |
-| **Column-type inference** | Auto-detect number/date/boolean types from sheet data and create typed MySQL columns |
-| **Multi-sheet support** | Monitor multiple sheets/tabs in the same spreadsheet; currently limited to one range |
-| **Row-level locking** | Lock entire rows for structural operations (insert row, delete row) instead of just cells |
-| **Audit log table** | Record every change with before/after values, timestamp, and source for full traceability |
-| **Health dashboard** | Real-time metrics: sync latency, queue depth, lock contention rate, API quota usage |
-| **Docker Compose** | One-command setup with MySQL + Redis + backend + frontend in containers |
-| **E2E tests** | Playwright/Cypress tests that edit the sheet, verify DB, and vice versa |
-| **Batch webhook** | Collect multiple `onEdit` events and send as a single batch to reduce HTTP overhead |
-| **Configurable table schema** | Let users define column names and types via UI; auto-create corresponding MySQL tables |
-| **Google Sheets API v4 Push Notifications** | Use `watches` + Cloud Pub/Sub for push-based change detection instead of polling |
-| **Horizontal scaling** | Run multiple backend instances with BullMQ's built-in distributed processing; Redis already handles shared state |
-
-### Architectural Improvements at Scale
-
-- **Event Sourcing**: Store every mutation as an immutable event; replay to reconstruct state
-- **Kafka/RabbitMQ**: Replace BullMQ for cross-service event distribution in a microservice architecture
-- **Read replicas**: Separate read/write MySQL connections for the viewer vs. sync engine
-- **Connection pooling proxy** (PgBouncer/ProxySQL): Manage DB connections across multiple backend instances
-- **Rate-limit per user**: Currently global; should be per API key / session for multi-tenant usage
-
----
-
 ## 📁 Project Structure
 
 ```
@@ -825,9 +421,3 @@ Superjoin_assignment/
 └── README.md                         # ← You are here
 └── OFFLINE.md                        # Offline resilience documentation
 ```
-
----
-
-## 📄 License
-
-This project was built as a take-home assignment for **Superjoin**. Not intended for production distribution.
